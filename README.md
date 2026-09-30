@@ -4,4 +4,4 @@ All code in this code space will be collaborations from each team member to make
 
 ### Team5_HiChan_Project
 
-Hi_Chan: a Java proof-of-concept that reads GPS logs from trucks on I-90 in Washington and Idaho and tags each entry with a highway "Channel ID" giving the 10-mile segment and direction of travel. It uses preprocessed NHPN highway data with geohash indexing for fast lookups.
+A Java proof-of-concept that reads GPS logs from trucks on I-90 in Washington and Idaho and tags each entry with a highway "Channel ID" giving the 10-mile segment and direction of travel. It uses preprocessed NHPN highway data with geohash indexing for fast lookups.
