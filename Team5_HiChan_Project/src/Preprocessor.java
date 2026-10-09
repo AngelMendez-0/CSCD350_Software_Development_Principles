@@ -1,3 +1,5 @@
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -33,61 +35,76 @@ public class Preprocessor {
         double endMp;                 // ENDMP
         List<double[]> coordinates;   // each double[] is {lon, lat}, same order as the file
 
-        /* Constructor
-         * What it does: stores the parsed values for one feature.
-         *
-         * How to code it:
-         *   1. Assign each parameter to its field.
-         *   2. If coordinates is null, use a new ArrayList so later loops don't crash.
-         */
+        // Constructor / Stores all the road data
         RoadFeature(String route, String stfips, double begMp, double endMp, List<double[]> coordinates) {
-            // TODO: assign fields
+            super();
+
+            // Routes / States
+            this.route = route;
+            this.stfips = stfips;
+
+            // Coordinates (makes sure there's no mean nullPointers :/ )
+            this.coordinates = (coordinates == null) ? new ArrayList<>() : coordinates;
+
+            // Points
+            this.begMp = begMp;
+            this.endMp = endMp;
         } // end of RoadFeature
 
-        /*
-         * What it does: shows one parsed feature without printing every coordinate.
-         * Print features.get(0) after parsing to check your parser works.
-         *
-         * Example output (first feature in the JSON):
-         *   I90 16 MP 0.0-6.825 (13 points)
-         */
+        // Parses output / Example: (I90 16 MP 0.0-6.825)
         @Override
         public String toString() {
             int count = (coordinates == null) ? 0 : coordinates.size();
             return route + " " + stfips + " MP " + begMp + "-" + endMp + " (" + count + " points)";
 
         } // end of toString
-    }
+    } // end of RoadFeature
 
-    /*
-     * What it does: drives the whole preprocessing run.
-     *
-     * How to code it:
-     *   1. Check args.length >= 2. If not, print a usage message and return.
-     *   2. String json = readJsonFile(args[0]);
-     *   3. List<RoadFeature> features = parseFeatures(json);
-     *   4. List<HighwaySegment> rows = buildSegments(features, GeoHash.DEFAULT_PRECISION);
-     *   5. writeCsv(rows, args[1]);
-     *   6. Print a summary such as "Read 1275 features, wrote N rows" so you
-     *      can see it worked (1275 is the expected feature count).
-     *   7. Catch IOException and print a clear error message.
-     */
-    public static void main(String[] args) {
-        // TODO: wire the steps together
+    // Gets the JSON / Parses it / Sends it to output
+    // If it fails it throws IOException
+    public static void main(String[] args) throws IOException {
+        if(args.length >= 2) {
+            try {
+                // Get JSON
+                String json = readJsonFile(args[0]);
+
+                // Parse
+                List<RoadFeature> features = parseFeatures(json);
+                List<HighwaySegment> rows = buildSegments(features, GeoHash.DEFAULT_PRECISION);
+
+                // Output
+                writeCsv(rows, args[1]);
+                System.out.println("Read " + features.size() +
+                        " features, wrote " + rows.size() + " rows"); // verify it worked
+
+            } catch (IOException e) {
+                throw new IOException("Failed to Parse JSON due to: ", e);
+
+            } // end of try catch
+        } else {
+        System.out.println("Usage: java Preprocessor <input.json> <output.csv>");
+        
+        } // end of if
+
     } // end of main
 
-    /*
-     * What it does: reads the entire JSON file into one String.
-     *
-     * How to code it:
-     *   1. return Files.readString(Path.of(path));   (Java 11+)
-     *      or use a BufferedReader + StringBuilder in a loop.
-     *   2. Let IOException propagate up to main.
-     *   (The file is about 1 MB, so reading it all at once is fine.)
-     */
+    // Reads the entire JSON file and turns it into one string
     public static String readJsonFile(String path) throws IOException {
-        // TODO: read file to a String
-        return "";
+
+        // Bob the Builder String
+        StringBuilder sb = new StringBuilder();
+
+        // Reads the file path and appends each line and creates a new line
+        // for each until line is null
+        try (BufferedReader br = new BufferedReader(new FileReader(path))) {
+            String line;
+
+            while ((line = br.readLine()) != null)
+                sb.append(line).append("\n");
+
+        } // end of try
+
+        return sb.toString();
     } // end of readJsonFile
 
     /*
