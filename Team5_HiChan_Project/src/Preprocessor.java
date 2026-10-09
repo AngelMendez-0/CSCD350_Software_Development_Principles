@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /*
  * Runs ONCE. Converts the NHPN highway JSON (I90_WA_ID.json) into a plain CSV
@@ -75,17 +77,17 @@ public class Preprocessor {
                 // Output
                 writeCsv(rows, args[1]);
                 System.out.println("Read " + features.size() +
-                        " features, wrote " + rows.size() + " rows"); // verify it worked
+                        " features, wrote " + rows.size() + " rows"); // verify it worked via the print
 
             } catch (IOException e) {
+                // oopsie was made
                 throw new IOException("Failed to Parse JSON due to: ", e);
 
             } // end of try catch
         } else {
         System.out.println("Usage: java Preprocessor <input.json> <output.csv>");
-        
-        } // end of if
 
+        } // end of if
     } // end of main
 
     // Reads the entire JSON file and turns it into one string
@@ -139,9 +141,60 @@ public class Preprocessor {
      *   Either way: print features.size() while testing. It should be 1275.
      */
     public static List<RoadFeature> parseFeatures(String json) {
+
         List<RoadFeature> features = new ArrayList<>();
-        // TODO: parse the JSON into RoadFeature objects
-        return features;
+
+        // returns index of the geometry and returns -1 if not found
+        int start = json.indexOf("\"geometry\"");
+
+        // matches the pattern where -? is 0 or 1,
+        // d+ any digit one or more,
+        // .? is a decimal point,
+        // d* is zero or more
+        Pattern numberPattern = Pattern.compile("-?\\d+\\.?\\d*");
+
+        // while we still have geometry
+        while (start != -1) {
+
+            // Geometry
+            // get next Geometry
+            int next = json.indexOf("\"geometry\"", start  +1);
+
+            // gives the text from start up to next and nothing more
+            String chunk = (next == -1) ? json.substring(start) : json.substring(start, next);
+
+            // Coordinates
+            // breaks the coordinates into a substring chunk
+            String coordText = chunk.substring(chunk.indexOf("\"coordinates\""), chunk.indexOf("\"SIGN1\""));
+
+            // cord list
+            List<double[]> coords = new ArrayList<>();
+
+            // takes previous pattern and checks for a match
+            Matcher matcher = numberPattern.matcher(coordText);
+
+            // while match is found
+            while (matcher.find()) {
+                double lon = Double.parseDouble(matcher.group()); // first is always longitude then adds to parse
+                matcher.find(); // the next number is always latitude
+                double lat = Double.parseDouble(matcher.group()); //adds lat to parse
+                coords.add(new double[]{ lon, lat }); // adds both to array list
+
+            } // end of while
+
+            // Last Fields
+            String route  = getValue(chunk, "SIGN1");
+            String stfips = getValue(chunk, "STFIPS");
+            double begMp  = Double.parseDouble(getValue(chunk, "BEGMP"));
+            double endMp  = Double.parseDouble(getValue(chunk, "ENDMP"));
+
+            // creates the given feature one at a time
+            features.add(new RoadFeature(route, stfips, begMp, endMp, coords));
+
+            start = next;
+        } // end of while
+
+        return features; // yipee
     } // end of parseFeatures
 
     /*
@@ -221,4 +274,37 @@ public class Preprocessor {
     public static void writeCsv(List<HighwaySegment> rows, String path) throws IOException {
         // TODO: write header + rows
     } // end of writeCsv
-}
+
+    public static String getValue(String chunk, String key){
+
+        // Where the key is and the colon right after it
+        int keyPos = chunk.indexOf("\"" + key + "\"");
+        int colon = chunk.indexOf(":", keyPos);
+
+        // The value ends at the next comma or the end of the line ENDMP has no comma
+        int comma = chunk.indexOf(",", colon);
+        int newline = chunk.indexOf("\n", colon);
+
+        int end;
+
+        if (comma == -1) { // if no comma then new line
+            end = newline;
+
+        } else if (newline == -1) { // if no new line then comma
+            end = comma;
+
+        } else { // otherwise finds smallest of the two
+            end = Math.min(comma, newline);
+
+        } // end of if
+
+        // If neither was found the value runs to the end of the chunk
+        if (end == -1)
+            end = chunk.length();
+
+        // Cuts it out strip spaces/\r and remove quotes
+        return chunk.substring(colon + 1, end).trim().replace("\"", "");
+        
+    } // end of getValue
+
+} // end of Preprocessor
