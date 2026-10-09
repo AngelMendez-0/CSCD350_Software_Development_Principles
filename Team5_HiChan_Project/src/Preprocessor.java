@@ -109,37 +109,9 @@ public class Preprocessor {
         return sb.toString();
     } // end of readJsonFile
 
-    /*
-     * What it does: turns the JSON text into a List<RoadFeature>.
-     *
-     * How to code it. Pick ONE approach:
-     *
-     *   Option A: Jackson library (allowed, not required)
-     *     1. ObjectMapper mapper = new ObjectMapper();
-     *        JsonNode root = mapper.readTree(json);
-     *     2. for (JsonNode f : root.get("features")) {
-     *            route  = f.get("SIGN1").asText();
-     *            stfips = f.get("STFIPS").asText();
-     *            begMp  = f.get("BEGMP").asDouble();
-     *            endMp  = f.get("ENDMP").asDouble();
-     *            for (JsonNode pt : f.get("geometry").get("coordinates"))
-     *                coords.add(new double[]{ pt.get(0).asDouble(), pt.get(1).asDouble() });
-     *            list.add(new RoadFeature(...));
-     *        }
-     *
-     *   Option B: no library (the file layout is very regular)
-     *     1. Split the text into features. Every feature contains "geometry",
-     *        so you can find each occurrence of "\"geometry\"" with indexOf in a loop.
-     *     2. Inside each feature chunk:
-     *        - Find "coordinates": [ ... ]] and pull out all numbers in order
-     *          (a regex like  -?\d+\.?\d*  works). Group them into pairs
-     *          {lon, lat}.
-     *        - Find "SIGN1", "STFIPS", "BEGMP", "ENDMP" with indexOf and read the
-     *          value after the colon (remove quotes for the string fields).
-     *     3. Build a RoadFeature for each chunk.
-     *
-     *   Either way: print features.size() while testing. It should be 1275.
-     */
+    // Breaks down each feature into smaller substrings called chunks
+    // Takes all those chunks at the end and returns them as a fully parsed array called features
+    // takes in JSON string and outputs I90 16 MP 0.0-6.825
     public static List<RoadFeature> parseFeatures(String json) {
 
         List<RoadFeature> features = new ArrayList<>();
@@ -188,7 +160,7 @@ public class Preprocessor {
             double begMp  = Double.parseDouble(getValue(chunk, "BEGMP"));
             double endMp  = Double.parseDouble(getValue(chunk, "ENDMP"));
 
-            // creates the given feature one at a time
+            // creates the given feature one at a time and hands them to the aray for storage
             features.add(new RoadFeature(route, stfips, begMp, endMp, coords));
 
             start = next;
@@ -304,7 +276,7 @@ public class Preprocessor {
 
         // Cuts it out strip spaces/\r and remove quotes
         return chunk.substring(colon + 1, end).trim().replace("\"", "");
-        
+
     } // end of getValue
 
 } // end of Preprocessor
