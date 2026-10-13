@@ -233,18 +233,18 @@ public class Preprocessor {
         return rows;
     } // end of buildSegments
 
-    /*
-     * What it does: writes the lookup file that HiChan will read.
-     *
-     * How to code it:
-     *   1. Open a PrintWriter (or BufferedWriter) using try-with-resources.
-     *   2. Write the header: GEOHASH,ROUTE,STFIPS,BEGMP,ENDMP
-     *   3. For each row: writer.println(row.toCsvLine());
-     *   4. The header column order must match HighwaySegment.toCsvLine()
-     *      and HighwaySegment.fromCsvLine().
-     */
+  // outputs the CSV with a header and with the rows appended after 
     public static void writeCsv(List<HighwaySegment> rows, String path) throws IOException {
-        // TODO: write header + rows
+        try (PrintWriter pw = new PrintWriter(new FileWriter(path))) {
+
+            // Header
+            pw.println("GEOHASH,ROUTE,STFIPS,BEGMP,ENDMP");
+
+            // appends to rows from toCsvLine
+            for(HighwaySegment row : rows)
+                pw.println(row.toCsvLine());
+            
+        } // end of try 
     } // end of writeCsv
 
     public static String getValue(String chunk, String key){
