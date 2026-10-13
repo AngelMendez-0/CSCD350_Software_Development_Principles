@@ -169,25 +169,22 @@ public class Preprocessor {
         return features; // yipee
     } // end of parseFeatures
 
-    /*
-     * What it does: returns the set of UNIQUE geohashes that this road
-     * segment passes through.
-     *
-     * How to code it:
-     *   1. Set<String> hashes = new LinkedHashSet<>();  (keeps insertion order,
-     *      removes duplicates; a plain HashSet also works)
-     *   2. for each double[] c in feature.coordinates:
-     *          double lon = c[0];  double lat = c[1];      <-- watch the order!
-     *          hashes.add(GeoHash.encode(lat, lon, precision));
-     *   3. (Recommended) Also add hashes for points BETWEEN vertices so a long
-     *      straight piece of road doesn't skip a cell. Call densify(...) first
-     *      and loop over its output instead of feature.coordinates.
-     *   4. return hashes;
-     */
+   // converts coordinates and road features into a geohash and returns only unique ones
     public static Set<String> computeGeohashes(RoadFeature feature, int precision) {
+
+        // creates the set that remembers the order things are added
         Set<String> hashes = new LinkedHashSet<>();
-        // TODO: geohash every coordinate (and optionally densified points)
-        return hashes;
+
+        // adding each coordinate pair
+        for(double[] coord : feature.coordinates) {
+            double lat = coord[0];
+            double lon = coord[1];
+
+            // turn it into a geohash and add it while duplicates are ignored
+            hashes.add(GeoHash.encode(lat, lon, precision));
+        } // end of for
+
+        return hashes; // yipee
     } // end of computeGeohashes
 
     /*
