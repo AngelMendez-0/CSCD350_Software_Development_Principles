@@ -7,6 +7,10 @@ import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.io.FileWriter;
+import java.io.PrintWriter;
 
 /*
  * Runs ONCE. Converts the NHPN highway JSON (I90_WA_ID.json) into a plain CSV
@@ -177,8 +181,8 @@ public class Preprocessor {
 
         // adding each coordinate pair
         for(double[] coord : feature.coordinates) {
-            double lat = coord[0];
-            double lon = coord[1];
+            double lon = coord[0];
+            double lat = coord[1];
 
             // turn it into a geohash and add it while duplicates are ignored
             hashes.add(GeoHash.encode(lat, lon, precision));
@@ -226,7 +230,22 @@ public class Preprocessor {
      */
     public static List<HighwaySegment> buildSegments(List<RoadFeature> features, int precision) {
         List<HighwaySegment> rows = new ArrayList<>();
-        // TODO: one row per (feature, unique geohash)
+        Set<String> seen = new HashSet<>(); //HashSet holds each value at most once, efficient for checking values inside.
+
+        for (RoadFeature f : features) { //Outer loop over the 1,275 road pieces.
+            for(String h : computeGeohashes(f, precision)) { //Inner Loop of Strings made by computeGeohashes using f road piece with given precision.
+                String key = h + "|" + f.route + "|" + f.stfips + "|" + f.begMp + "|" + f.endMp; //key is the row identifying string, exists so HashSet can compare.
+                if (seen.add(key)) { //add() inserts the value and returns true if not present, returns false if row already exists there.
+                    rows.add(new HighwaySegment(h, f.route, f.stfips, f.begMp, f.endMp)); 
+                    //Constructor takes the 5 values in order and object goes in output list.
+                }
+
+            }
+        }
+
+        rows.sort(Comparator.comparing(HighwaySegment::getGeohash).thenComparingDouble(HighwaySegment::getBegMp));
+        //Comparator that sorts alphabetically by geohash string using method reference, then when two rows have same geohash, the smaller BegMP goes first.
+
         return rows;
     } // end of buildSegments
 
