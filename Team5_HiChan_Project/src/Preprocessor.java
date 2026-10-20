@@ -250,20 +250,8 @@ public class Preprocessor {
         return result;
     } // end of densify
 
-    /*
-     * What it does: converts every feature into one HighwaySegment row per
-     * unique geohash (Strategy 1 in PreprocessorLogic.docx).
-     *
-     * How to code it:
-     *   1. List<HighwaySegment> rows = new ArrayList<>();
-     *   2. for each RoadFeature f:
-     *          for each String h in computeGeohashes(f, precision):
-     *              rows.add(new HighwaySegment(h, f.route, f.stfips, f.begMp, f.endMp));
-     *   3. (Optional) sort rows by geohash with
-     *      rows.sort(Comparator.comparing(HighwaySegment::getGeohash))
-     *      so the file is easy to scan by eye.
-     *   4. return rows;
-     */
+    
+     // converts every feature into one HighwaySegment row per unique geohash
     public static List<HighwaySegment> buildSegments(List<RoadFeature> features, int precision) {
         List<HighwaySegment> rows = new ArrayList<>();
         Set<String> seen = new HashSet<>(); //HashSet holds each value at most once, efficient for checking values inside.
