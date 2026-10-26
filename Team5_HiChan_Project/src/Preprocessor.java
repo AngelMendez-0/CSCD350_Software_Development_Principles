@@ -247,6 +247,23 @@ public class Preprocessor {
     public static List<double[]> densify(List<double[]> coordinates, double maxStepDegrees) {
         List<double[]> result = new ArrayList<>();
         // TODO (optional): interpolate extra points between vertices
+        for(int i = 0; i < coordinates.size() - 1; i++){
+            double[] a = coordinates.get(i);
+            double[] b = coordinates.get(i + 1);
+            double dist = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
+            int steps = Math.max(1, (int) Math.ceil(dist/maxStepDegrees));
+
+            for(int s = 0; s < steps; s++) {
+                double t = s / (double) steps;
+                result.add(new double[] {
+                        a[0] + t * (b[0] - a[0]),
+                        a[1] + t * (b[1] - a[1])
+                });
+            }
+        }
+
+        if (!coordinates.isEmpty()) result.add(coordinates.get(coordinates.size() - 1));
+        
         return result;
     } // end of densify
 
