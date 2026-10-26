@@ -227,43 +227,36 @@ public class Preprocessor {
         return hashes; // yipee
     } // end of computeGeohashes
 
-    /*
-     * What it does: inserts extra points along each line piece so consecutive
-     * points are never farther apart than maxStepDegrees. This fixes the
-     * "line crosses a cell with no vertex in it" problem from PreprocessorLogic.docx.
-     *
-     * How to code it:
-     *   1. Create a new List<double[]> result.
-     *   2. For each pair of neighbors A = coords[i], B = coords[i+1]:
-     *        a. dist = max(|B.lon - A.lon|, |B.lat - A.lat|)
-     *        b. steps = (int) Math.ceil(dist / maxStepDegrees)  (at least 1)
-     *        c. for s = 0 .. steps-1:
-     *               t = s / (double) steps
-     *               add { A.lon + t*(B.lon-A.lon), A.lat + t*(B.lat-A.lat) }
-     *   3. Add the very last coordinate.
-     *   4. Return result.
-     *   A good maxStepDegrees for precision 6 is about 0.002 (smaller than one cell).
-     */
+    // Inserts extra points alon geach line piece so consecutive points are never farther apart than maxStepDegrees
+    // this fixes when a line crosses a cell with no vertex in it 
     public static List<double[]> densify(List<double[]> coordinates, double maxStepDegrees) {
+        
+        // creating double array list
         List<double[]> result = new ArrayList<>();
-        // TODO (optional): interpolate extra points between vertices
-        for(int i = 0; i < coordinates.size() - 1; i++){
-            double[] a = coordinates.get(i);
-            double[] b = coordinates.get(i + 1);
-            double dist = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
-            int steps = Math.max(1, (int) Math.ceil(dist/maxStepDegrees));
 
+        // for index in coordinates
+        for(int i = 0; i < coordinates.size() - 1; i++){
+            
+            double[] a = coordinates.get(i); // create cord A
+            double[] b = coordinates.get(i + 1); // create cord B
+            double dist = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])); // get the max distance
+            int steps = Math.max(1, (int) Math.ceil(dist/maxStepDegrees)); // get the max steps
+
+            // for steps in steps create a new double for each step
             for(int s = 0; s < steps; s++) {
                 double t = s / (double) steps;
                 result.add(new double[] {
                         a[0] + t * (b[0] - a[0]),
                         a[1] + t * (b[1] - a[1])
                 });
-            }
-        }
+            } // end of for
+        } // end of for
 
-        if (!coordinates.isEmpty()) result.add(coordinates.get(coordinates.size() - 1));
-        
+        // If coordinates not empty add coordinates to result
+        if (!coordinates.isEmpty()) 
+            result.add(coordinates.get(coordinates.size() - 1));
+
+        // returning result
         return result;
     } // end of densify
 
