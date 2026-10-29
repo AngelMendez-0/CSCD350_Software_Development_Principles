@@ -1,6 +1,8 @@
 import java.io.BufferedReader;
-import java.io.FileReader;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -70,6 +72,11 @@ import java.io.PrintWriter;
  */
 public class Preprocessor {
 
+    // Biggest gap (in degrees) allowed between two consecutive points after densify.
+    // A precision 6 geohash cell is about 0.0055 wide and 0.0027 tall, so 0.001
+    // is small enough that a line can't hop over a whole cell without a point landing in it.
+    static final double MAX_STEP_DEGREES = 0.001;
+
     static class RoadFeature {
         String route;                 // SIGN1, e.g. "I90"
         String stfips;                // "53" or "16"
@@ -79,7 +86,6 @@ public class Preprocessor {
 
         // Constructor / Stores all the road data
         RoadFeature(String route, String stfips, double begMp, double endMp, List<double[]> coordinates) {
-            super();
 
             // Routes / States
             this.route = route;
@@ -120,12 +126,18 @@ public class Preprocessor {
                         " features, wrote " + rows.size() + " rows"); // verify it worked via the print
 
             } catch (IOException e) {
-                // oopsie was made
+                // oopsie was made reading or writing a file
+                throw new IOException("Failed to read or write a file due to: ", e);
+
+            } catch (RuntimeException e) {
+                // oopsie was made while parsing (bad number, missing field, etc.)
                 throw new IOException("Failed to Parse JSON due to: ", e);
 
             } // end of try catch
         } else {
-        System.out.println("Usage: java Preprocessor <input.json> <output.csv>");
+            // Not enough arguments so say how to run it and exit with an error code
+            System.err.println("Usage: java Preprocessor <input.json> <output.csv>");
+            System.exit(1);
 
         } // end of if
     } // end of main
@@ -136,9 +148,9 @@ public class Preprocessor {
         // Bob the Builder String
         StringBuilder sb = new StringBuilder();
 
-        // Reads the file path and appends each line and creates a new line
+        // Reads the file path (as UTF-8) and appends each line and creates a new line
         // for each until line is null
-        try (BufferedReader br = new BufferedReader(new FileReader(path))) {
+        try (BufferedReader br = Files.newBufferedReader(Paths.get(path), StandardCharsets.UTF_8)) {
             String line;
 
             while ((line = br.readLine()) != null)
@@ -159,11 +171,16 @@ public class Preprocessor {
         // returns index of the geometry and returns -1 if not found
         int start = json.indexOf("\"geometry\"");
 
-        // matches the pattern where -? is 0 or 1,
+        // matches one number where -? is 0 or 1,
         // d+ any digit one or more,
         // .? is a decimal point,
-        // d* is zero or more
-        Pattern numberPattern = Pattern.compile("-?\\d+\\.?\\d*");
+        // d* is zero or more,
+        // and the last part lets scientific notation like 1.2E-5 through
+        String number = "-?\\d+\\.?\\d*(?:[eE][-+]?\\d+)?";
+
+        // matches one inner [lon, lat] pair, an extra third value (like elevation) is allowed but ignored
+        // group 1 is longitude and group 2 is latitude
+        Pattern pairPattern = Pattern.compile("\\[\\s*(" + number + ")\\s*,\\s*(" + number + ")(?:\\s*,\\s*" + number + ")*\\s*\\]");
 
         // while we still have geometry
         while (start != -1) {
@@ -177,19 +194,45 @@ public class Preprocessor {
 
             // Coordinates
             // breaks the coordinates into a substring chunk
-            String coordText = chunk.substring(chunk.indexOf("\"coordinates\""), chunk.indexOf("\"SIGN1\""));
+            // (empty if the feature has no coordinates, like "geometry": null)
+            String coordText = "";
+            int coordKey = chunk.indexOf("\"coordinates\"");
+            int open = (coordKey == -1) ? -1 : chunk.indexOf("[", coordKey);
+
+            if (open != -1) {
+                int depth = 0; // how many brackets deep we are
+                int close = chunk.length();
+
+                // walks forward until the bracket that opened the coordinates is closed again
+                for (int i = open; i < chunk.length(); i++) {
+                    char c = chunk.charAt(i);
+
+                    if (c == '[') {
+                        depth++;
+
+                    } else if (c == ']') {
+                        depth--;
+
+                        if (depth == 0) {
+                            close = i + 1;
+                            break;
+                        } // end of if
+                    } // end of if
+                } // end of for
+
+                coordText = chunk.substring(open, close);
+            } // end of if
 
             // cord list
             List<double[]> coords = new ArrayList<>();
 
             // takes previous pattern and checks for a match
-            Matcher matcher = numberPattern.matcher(coordText);
+            Matcher matcher = pairPattern.matcher(coordText);
 
             // while match is found
             while (matcher.find()) {
-                double lon = Double.parseDouble(matcher.group()); // first is always longitude then adds to parse
-                matcher.find(); // the next number is always latitude
-                double lat = Double.parseDouble(matcher.group()); //adds lat to parse
+                double lon = Double.parseDouble(matcher.group(1)); // first is always longitude then adds to parse
+                double lat = Double.parseDouble(matcher.group(2)); // the next number is always latitude
                 coords.add(new double[]{ lon, lat }); // adds both to array list
 
             } // end of while
@@ -197,11 +240,18 @@ public class Preprocessor {
             // Last Fields
             String route  = getValue(chunk, "SIGN1");
             String stfips = getValue(chunk, "STFIPS");
-            double begMp  = Double.parseDouble(getValue(chunk, "BEGMP"));
-            double endMp  = Double.parseDouble(getValue(chunk, "ENDMP"));
+            String begText = getValue(chunk, "BEGMP");
+            String endText = getValue(chunk, "ENDMP");
 
-            // creates the given feature one at a time and hands them to the aray for storage
-            features.add(new RoadFeature(route, stfips, begMp, endMp, coords));
+            // only keep the feature if every field was actually there (skips broken or null ones)
+            if (route != null && stfips != null && begText != null && endText != null) {
+                double begMp  = Double.parseDouble(begText);
+                double endMp  = Double.parseDouble(endText);
+
+                // creates the given feature one at a time and hands them to the array for storage
+                features.add(new RoadFeature(route, stfips, begMp, endMp, coords));
+
+            } // end of if
 
             start = next;
         } // end of while
@@ -209,14 +259,17 @@ public class Preprocessor {
         return features; // yipee
     } // end of parseFeatures
 
-   // converts coordinates and road features into a geohash and returns only unique ones
+    // converts coordinates and road features into a geohash and returns only unique ones
     public static Set<String> computeGeohashes(RoadFeature feature, int precision) {
 
         // creates the set that remembers the order things are added
         Set<String> hashes = new LinkedHashSet<>();
 
+        // fills in extra points first so no geohash cell the line crosses gets skipped
+        List<double[]> dense = densify(feature.coordinates, MAX_STEP_DEGREES);
+
         // adding each coordinate pair
-        for(double[] coord : feature.coordinates) {
+        for(double[] coord : dense) {
             double lon = coord[0];
             double lat = coord[1];
 
@@ -227,16 +280,16 @@ public class Preprocessor {
         return hashes; // yipee
     } // end of computeGeohashes
 
-    // Inserts extra points alon geach line piece so consecutive points are never farther apart than maxStepDegrees
-    // this fixes when a line crosses a cell with no vertex in it 
+    // Inserts extra points along each line piece so consecutive points are never farther apart than maxStepDegrees
+    // this fixes when a line crosses a cell with no vertex in it
     public static List<double[]> densify(List<double[]> coordinates, double maxStepDegrees) {
-        
+
         // creating double array list
         List<double[]> result = new ArrayList<>();
 
         // for index in coordinates
         for(int i = 0; i < coordinates.size() - 1; i++){
-            
+
             double[] a = coordinates.get(i); // create cord A
             double[] b = coordinates.get(i + 1); // create cord B
             double dist = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])); // get the max distance
@@ -253,15 +306,15 @@ public class Preprocessor {
         } // end of for
 
         // If coordinates not empty add coordinates to result
-        if (!coordinates.isEmpty()) 
+        if (!coordinates.isEmpty())
             result.add(coordinates.get(coordinates.size() - 1));
 
         // returning result
         return result;
     } // end of densify
 
-    
-     // converts every feature into one HighwaySegment row per unique geohash
+
+    // converts every feature into one HighwaySegment row per unique geohash
     public static List<HighwaySegment> buildSegments(List<RoadFeature> features, int precision) {
         List<HighwaySegment> rows = new ArrayList<>();
         Set<String> seen = new HashSet<>(); //HashSet holds each value at most once, efficient for checking values inside.
@@ -270,12 +323,12 @@ public class Preprocessor {
             for(String h : computeGeohashes(f, precision)) { //Inner Loop of Strings made by computeGeohashes using f road piece with given precision.
                 String key = h + "|" + f.route + "|" + f.stfips + "|" + f.begMp + "|" + f.endMp; //key is the row identifying string, exists so HashSet can compare.
                 if (seen.add(key)) { //add() inserts the value and returns true if not present, returns false if row already exists there.
-                    rows.add(new HighwaySegment(h, f.route, f.stfips, f.begMp, f.endMp)); 
+                    rows.add(new HighwaySegment(h, f.route, f.stfips, f.begMp, f.endMp));
                     //Constructor takes the 5 values in order and object goes in output list.
-                }
+                } // end of if
 
-            }
-        }
+            } // end of for
+        } // end of for
 
         rows.sort(Comparator.comparing(HighwaySegment::getGeohash).thenComparingDouble(HighwaySegment::getBegMp));
         //Comparator that sorts alphabetically by geohash string using method reference, then when two rows have same geohash, the smaller BegMP goes first.
@@ -283,7 +336,7 @@ public class Preprocessor {
         return rows;
     } // end of buildSegments
 
-  // outputs the CSV with a header and with the rows appended after 
+    // outputs the CSV with a header and with the rows appended after
     public static void writeCsv(List<HighwaySegment> rows, String path) throws IOException {
         try (PrintWriter pw = new PrintWriter(new FileWriter(path))) {
 
@@ -293,39 +346,55 @@ public class Preprocessor {
             // appends to rows from toCsvLine
             for(HighwaySegment row : rows)
                 pw.println(row.toCsvLine());
-            
-        } // end of try 
+
+        } // end of try
     } // end of writeCsv
 
+    // Finds the value for a key in a chunk, returns null if the key (or its value) isn't there
     public static String getValue(String chunk, String key){
 
         // Where the key is and the colon right after it
         int keyPos = chunk.indexOf("\"" + key + "\"");
+
+        // key isn't in this chunk so there is nothing to read
+        if (keyPos == -1)
+            return null;
+
         int colon = chunk.indexOf(":", keyPos);
 
-        // The value ends at the next comma or the end of the line ENDMP has no comma
+        // no colon means the key has no value
+        if (colon == -1)
+            return null;
+
+        // The value ends at the next comma, closing brace or the end of the line (ENDMP has no comma)
         int comma = chunk.indexOf(",", colon);
+        int brace = chunk.indexOf("}", colon);
         int newline = chunk.indexOf("\n", colon);
 
-        int end;
+        // finds the smallest of the three that actually exist
+        int end = -1;
 
-        if (comma == -1) { // if no comma then new line
-            end = newline;
-
-        } else if (newline == -1) { // if no new line then comma
+        if (comma != -1)
             end = comma;
 
-        } else { // otherwise finds smallest of the two
-            end = Math.min(comma, newline);
+        if (brace != -1 && (end == -1 || brace < end))
+            end = brace;
 
-        } // end of if
+        if (newline != -1 && (end == -1 || newline < end))
+            end = newline;
 
-        // If neither was found the value runs to the end of the chunk
+        // If none were found the value runs to the end of the chunk
         if (end == -1)
             end = chunk.length();
 
         // Cuts it out strip spaces/\r and remove quotes
-        return chunk.substring(colon + 1, end).trim().replace("\"", "");
+        String value = chunk.substring(colon + 1, end).trim().replace("\"", "");
+
+        // an empty or null value counts as missing
+        if (value.isEmpty() || value.equals("null"))
+            return null;
+
+        return value;
 
     } // end of getValue
 
