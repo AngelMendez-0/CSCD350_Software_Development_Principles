@@ -10,74 +10,64 @@
 public class HighwaySegment {
 
     private String geohash;
-    private String route;     // always "I90" in this data
-    private String stfips;    // "53" = WA, "16" = ID
-    private double begMp;     // beginning milepost
-    private double endMp;     // ending milepost
+    private String route; // always "I90" in this data
+    private String stfips; // "53" = WA, "16" = ID
+    private double begMp; // beginning milepost
+    private double endMp; // ending milepost
 
-    /* Constructor
-     * What it does: builds a segment row from its five values.
-     *
-     * How to code it:
-     *   1. Assign each parameter to the matching field (this.geohash = geohash; ...).
-     */
+    // Constructor
     public HighwaySegment(String geohash, String route, String stfips, double begMp, double endMp) {
-        // TODO: assign fields
+        this.geohash = geohash;
+        this.route = route;
+        this.stfips = stfips;
+        this.begMp = begMp;
+        this.endMp = endMp;
     } // end of HighwaySegment
 
-    /*
-     * What it does: turns one CSV line from the lookup file back into an object
-     * (HiChan uses it when loading the index).
-     *
-     * How to code it:
-     *   1. line.split(",") gives 5 parts: geohash, route, stfips, begmp, endmp.
-     *   2. trim() each part.
-     *   3. Double.parseDouble() the two milepost values.
-     *   4. return new HighwaySegment(...).
-     *   (Optional) throw IllegalArgumentException if there aren't exactly 5 parts.
-     */
+
+    // turns one CSV line from the lookup file back into an object
     public static HighwaySegment fromCsvLine(String line) {
-        // TODO: parse a CSV line into a HighwaySegment
-        return null;
+
+        // a null line can't be split so say so clearly
+        if(line == null)
+            throw new IllegalArgumentException("line is null");
+
+        String[] parts = line.split(",", -1); // splits the line into its 5 parts (-1 keeps empty trailing parts)
+
+        // anything other than the 5 parts means the line is bad
+        if(parts.length != 5)
+            throw new IllegalArgumentException("expected 5 parts but got " + parts.length);
+
+        // trim each part
+        String geohash = parts[0].trim();
+        String route = parts[1].trim();
+        String stfips = parts[2].trim();
+
+        // two mileposts values
+        double begMp = Double.parseDouble(parts[3].trim());
+        double endMp = Double.parseDouble(parts[4].trim());
+
+        return new HighwaySegment(geohash, route, stfips, begMp, endMp);
     } // end of fromCsvLine
 
-    /*
-     * What it does: the opposite of fromCsvLine. The Preprocessor uses it when
-     * writing the output file.
-     *
-     * How to code it:
-     *   1. Return geohash + "," + route + "," + stfips + "," + begMp + "," + endMp
-     *      (or use String.join / String.format).
-     *   2. Keep the column order identical to the header line the Preprocessor writes.
-     */
+    // the opposite of fromCsvLine
+    // used for output file
     public String toCsvLine() {
-        // TODO: build the comma-separated line
-        return "";
+        return geohash + "," + route + "," + stfips + "," + begMp + "," + endMp;
     } // end of toCsvLine
 
-    /*
-     * What it does: converts the FIPS code to the 2-letter state used in the
-     * Channel ID ("53" -> "WA", "16" -> "ID").
-     *
-     * How to code it:
-     *   1. if stfips equals "53" return "WA"; if "16" return "ID".
-     *   2. Otherwise return "??" (or throw) so a bad value shows up in testing.
-     */
+    // converts the FIPS to a 2 letter state
+    // (.equals compares the text, == would only compare object references)
     public String getStateAbbrev() {
-        // TODO: map FIPS code to state abbreviation
-        return "";
+        if("53".equals(stfips))
+            return "WA";
+        else if("16".equals(stfips))
+            return "ID";
+        else
+            return "??";
     } // end of getStateAbbrev
 
-    /*
-     * What it does: returns the middle milepost of the segment, (begMp + endMp) / 2.
-     * HiChan uses it as an estimate of the truck's milepost and to tell
-     * whether mileposts are going up or down between GPS points.
-     *
-     * How to code it:
-     *   1. return (begMp + endMp) / 2.0;
-     */
-
-    // Getters / Setters
+    // Getters
     public double getMidMp() { return (begMp + endMp) / 2; } // end of getMidMp
 
     public String getGeohash() { return geohash; } // end of getGeohash
@@ -90,7 +80,7 @@ public class HighwaySegment {
 
     public double getEndMp() { return endMp; } // end of getEndMp
 
-//    What it does: a readable version for debugging/printing.
+    //    What it does: a readable version for debugging/printing.
 //    Return something like "I90 WA MP 280.12-282.5 [c2kx9p]".
     @Override
     public String toString() {
