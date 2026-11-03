@@ -1,10 +1,12 @@
+package Hi_Chan;
+
 /*
  * One line from a GPS Logger file, for example:
  *
  *     date time,latitude,longitude,altitude(m),speed(m/s),sat_used
  *     2026-09-22 23:07:25.000,47.65384674,-117.3701775,565.534,15.03,25
  *
- * HiChan fills in the extra fields (geohash, matched segment, channelId)
+ * Hi_Chan.HiChan fills in the extra fields (geohash, matched segment, channelId)
  * while it processes the log.
  */
 public class GpsRecord {
@@ -14,7 +16,6 @@ public class GpsRecord {
     private String originalLine;
 
     // Important Data
-    private String ChannelID;
     private String dateTime;
     private double latitude;
     private double longitude;
@@ -23,9 +24,10 @@ public class GpsRecord {
     private int satUsed;
 
     // INIT
-    private String geohash;            // precision-6 geohash of this point
-    private HighwaySegment segment;    // best matching segment, or null if no match
-    private String channelId;          // e.g. "I90WAEB_290", or null until known
+    private String geohash;            // precision-5 geohash of this point
+    private HighwaySegment segment;    // nearest highway point, or null if no match
+    private String channelId;          // e.g. "#I90WAEB_290" or "#I90WA??_290", null until built
+    private String errorText;          // why the line was skipped (FR-14), or null
 
 
     /* Constructor
@@ -38,18 +40,24 @@ public class GpsRecord {
     public GpsRecord(String originalLine, String dateTime, double latitude, double longitude,
                      double altitude, double speed, int satUsed) {
         // TODO: assign fields
-    } // end of GpsRecord
+    } // end of Hi_Chan.GpsRecord
 
     /*
-     * What it does: parses one data line of the GPS log into a GpsRecord.
+     * What it does: parses one data line of the GPS log into a Hi_Chan.GpsRecord.
      *
      * How to code it:
-     *   1. split(",") gives 6 parts:
+     *   1. Drop a trailing "\r" so CRLF and LF files both work (NFR-D1).
+     *   2. split(",", -1) must give exactly 6 parts:
      *        [0] date time  [1] latitude  [2] longitude
      *        [3] altitude   [4] speed     [5] sat_used
-     *   2. Double.parseDouble() parts 1-4 and Integer.parseInt() part 5.
-     *   3. return new GpsRecord(line, parts[0], ...).
-     *   NOTE: the caller (HiChan.readGpsLog) skips the header line, so this
+     *   3. trim() each part, Double.parseDouble() parts 1-4 and Integer.parseInt() part 5.
+     *   4. If anything is wrong (null line, wrong field count, empty date time, a value
+     *      that isn't a number, latitude outside -90..90, longitude outside -180..180),
+     *      throw IllegalArgumentException with a short reason that has NO commas,
+     *      e.g. "expected 6 fields but found 5". readGpsLog writes that reason after
+     *      SKIPPED-Error: (FR-14).
+     *   5. return new Hi_Chan.GpsRecord(line without "\r", parts[0], ...).
+     *   NOTE: the caller (Hi_Chan.HiChan.readGpsLog) skips the header line, so this
      *   method only ever gets data lines.
      */
     public static GpsRecord fromCsvLine(String line) {
@@ -63,28 +71,21 @@ public class GpsRecord {
      * the prior Channel ID in that case.
      *
      * How to code it:
-     *   1. If other is null return false.
-     *   2. Compare latitude and longitude with a small tolerance instead of ==,
-     *      e.g. Math.abs(lat1 - lat2) < 0.00001 (about 1 meter). GPS jitters.
-     *   3. (Alternative) also check speed close to 0.
+     *   1. If other is null, or either record has errorText set, return false.
+     *   2. Compare latitude and longitude with HiChanConfig.SAME_LOCATION_TOLERANCE
+     *      instead of ==, e.g. Math.abs(lat1 - lat2) < 0.00001 (about 1 meter). GPS jitters.
      */
     public boolean isSameLocation(GpsRecord other) {
         // TODO: compare coordinates with a tolerance
         return false;
     } // end of isSameLocation
 
-    /*
-     * What it does: the line written to the output file, which is the original
-     * line plus the Channel ID as the last field.
-     *
-     * How to code it:
-     *   1. return originalLine + "," + (channelId == null ? "" : channelId);
-     *   2. Decide what to write when the channel is still unknown (empty
-     *      string, "UNKNOWN", etc.) and stay consistent.
-     */
+    // the line written to the output file: the original line plus the Channel ID
+    // as the last field (FR-12), or SKIPPED-Error:<reason> for a bad line (FR-14)
     public String toOutputLine() {
-        return dateTime + " (" + latitude + ", " + longitude + ") "
-                + geohash + " -> " + segment + " = " + channelId;
+        if (errorText != null)
+            return originalLine + ",SKIPPED-Error:" + errorText;
+        return originalLine + "," + (channelId == null ? "" : channelId);
     } // end of toOutputLine
 
     // Getters / Setters
@@ -96,7 +97,11 @@ public class GpsRecord {
 
     public double getLongitude() { return longitude; } // end of getLongitude
 
+    public double getAltitude() { return altitude; } // end of getAltitude
+
     public double getSpeed() { return speed; } // end of getSpeed
+
+    public int getSatUsed() { return satUsed; } // end of getSatUsed
 
     public String getGeohash() { return geohash; } // end of getGeohash
 
@@ -106,7 +111,11 @@ public class GpsRecord {
 
     public void setSegment(HighwaySegment segment) { this.segment = segment; } // end of setSegment
 
-    public String getChannelId() { return ChannelID; } // end of getChannelId
+    public String getChannelId() { return channelId; } // end of getChannelId
 
     public void setChannelId(String channelId) { this.channelId = channelId; } // end of setChannelId
-} // end of GpsRecord
+
+    public String getErrorText() { return errorText; } // end of getErrorText
+
+    public void setErrorText(String errorText) { this.errorText = errorText; } // end of setErrorText
+} // end of Hi_Chan.GpsRecord
