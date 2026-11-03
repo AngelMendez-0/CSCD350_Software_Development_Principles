@@ -1,16 +1,16 @@
+package Hi_Chan;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.io.FileWriter;
 import java.io.PrintWriter;
 
@@ -54,12 +54,11 @@ import java.io.PrintWriter;
  * Runs ONCE. Converts the NHPN highway JSON (I90_WA_ID.json) into a plain CSV
  * lookup file indexed by geohash. No database is allowed.
  *
- *   Input JSON  ->  parse features  ->  geohash every coordinate (precision 6)
- *               ->  de-duplicate per feature (Set<String>)  ->  write CSV
+ *   JSON Reader -> Segment Filter -> Segment Splitter -> Geohash Indexer -> Lookup File Writer
  *
- * Output CSV (one row per unique geohash per feature):
- *     GEOHASH,ROUTE,STFIPS,BEGMP,ENDMP
- *     c2kx9p,I90,53,280.12,282.5
+ * Output CSV (one row per highway point, sorted by geohash, FR-03 / FR-04):
+ *     GEOHASH,ROUTE,STFIPS,BEGMP,ENDMP,LAT,LON,CHANNEL
+ *     c2kz3,I90,16,0.0,6.825,47.709889,-116.993985,10
  *
  * Facts about the provided JSON (checked):
  *   - Top level is {"type":"FeatureCollection","features":[ ... ]}
@@ -68,24 +67,19 @@ import java.io.PrintWriter;
  *   - Each feature has exactly: geometry, SIGN1, STFIPS, BEGMP, ENDMP
  *   - IMPORTANT: coordinates are [LONGITUDE, LATITUDE] (longitude first!)
  *
- * Usage: java Preprocessor I90_WA_ID.json segments.csv
+ * Usage: java Hi_Chan.Preprocessor I90_WA_ID.json segments.csv
  */
 public class Preprocessor {
 
-    // Biggest gap (in degrees) allowed between two consecutive points after densify.
-    // A precision 6 geohash cell is about 0.0055 wide and 0.0027 tall, so 0.001
-    // is small enough that a line can't hop over a whole cell without a point landing in it.
-    static final double MAX_STEP_DEGREES = 0.001;
-
-    static class RoadFeature {
-        String route;                 // SIGN1, e.g. "I90"
-        String stfips;                // "53" or "16"
-        double begMp;                 // BEGMP
-        double endMp;                 // ENDMP
-        List<double[]> coordinates;   // each double[] is {lon, lat}, same order as the file
+    public static class RoadFeature {
+        public String route;                 // SIGN1, e.g. "I90"
+        public String stfips;                // "53" or "16"
+        public double begMp;                 // BEGMP
+        public double endMp;                 // ENDMP
+        public List<double[]> coordinates;   // each double[] is {lon, lat}, same order as the file
 
         // Constructor / Stores all the road data
-        RoadFeature(String route, String stfips, double begMp, double endMp, List<double[]> coordinates) {
+        public RoadFeature(String route, String stfips, double begMp, double endMp, List<double[]> coordinates) {
 
             // Routes / States
             this.route = route;
@@ -109,34 +103,61 @@ public class Preprocessor {
     } // end of RoadFeature
 
     // Gets the JSON / Parses it / Sends it to output
-    // If it fails it throws IOException
-    public static void main(String[] args) throws IOException {
-        if(args.length >= 2) {
+    // Any problem prints one line, ERROR:<file>:<reason>, and exits with status 1 (NFR-U1, NFR-U2)
+    public static void main(String[] args) {
+        if(args.length == 2) {
+            // Get JSON
+            String json;
             try {
-                // Get JSON
-                String json = readJsonFile(args[0]);
-
-                // Parse
-                List<RoadFeature> features = parseFeatures(json);
-                List<HighwaySegment> rows = buildSegments(features, GeoHash.DEFAULT_PRECISION);
-
-                // Output
-                writeCsv(rows, args[1]);
-                System.out.println("Read " + features.size() +
-                        " features, wrote " + rows.size() + " rows"); // verify it worked via the print
-
+                json = readJsonFile(args[0]);
+            } catch (NoSuchFileException e) {
+                System.err.println("ERROR:" + args[0] + ":file not found");
+                System.exit(1);
+                return;
             } catch (IOException e) {
-                // oopsie was made reading or writing a file
-                throw new IOException("Failed to read or write a file due to: ", e);
+                System.err.println("ERROR:" + args[0] + ":file not readable");
+                System.exit(1);
+                return;
+            } // end of try catch
 
+            if (json.trim().isEmpty()) {
+                System.err.println("ERROR:" + args[0] + ":file empty");
+                System.exit(1);
+                return;
+            } // end of if
+
+            // Parse
+            List<RoadFeature> features;
+            try {
+                features = parseFeatures(json);
             } catch (RuntimeException e) {
                 // oopsie was made while parsing (bad number, missing field, etc.)
-                throw new IOException("Failed to Parse JSON due to: ", e);
-
+                System.err.println("ERROR:" + args[0] + ":bad value in JSON");
+                System.exit(1);
+                return;
             } // end of try catch
+
+            // Filter, split at 10-mile marks, geohash, sort
+            List<RoadFeature> kept = filterSegments(features);
+            List<HighwaySegment> rows = splitAtChannelBoundaries(kept);
+            computeGeohashes(rows, GeoHash.DEFAULT_PRECISION);
+            rows = buildSegments(rows);
+
+            // Output
+            try {
+                writeCsv(rows, args[1]);
+            } catch (IOException e) {
+                System.err.println("ERROR:" + args[1] + ":cannot write file");
+                System.exit(1);
+                return;
+            } // end of try catch
+
+            System.out.println("Read " + features.size() +
+                    " features, wrote " + rows.size() + " rows"); // verify it worked via the print
+
         } else {
-            // Not enough arguments so say how to run it and exit with an error code
-            System.err.println("Usage: java Preprocessor <input.json> <output.csv>");
+            // Wrong number of arguments so say how to run it and exit with an error code
+            System.err.println("Usage: java Hi_Chan.Preprocessor <input.json> <output.csv>");
             System.exit(1);
 
         } // end of if
@@ -259,81 +280,67 @@ public class Preprocessor {
         return features; // yipee
     } // end of parseFeatures
 
-    // converts coordinates and road features into a geohash and returns only unique ones
-    public static Set<String> computeGeohashes(RoadFeature feature, int precision) {
+    /*
+     * Segment Filter (FR-02)
+     * What it does: keeps only features on I-90 in Washington or Idaho and prints a
+     * skip report line for every other feature.
+     *
+     * How to code it:
+     *   1. List<RoadFeature> kept = new ArrayList<>();
+     *   2. For each feature f:
+     *        if f.route equals HiChanConfig.HIGHWAY and f.stfips equals
+     *        HiChanConfig.STATE_WA or HiChanConfig.STATE_ID -> kept.add(f)
+     *        else -> System.out.println("Skipped: " + f);
+     *   3. return kept;  (same order as the input)
+     */
+    public static List<RoadFeature> filterSegments(List<RoadFeature> features) {
+        // TODO: keep I-90 WA/ID features, report the rest
+        return new ArrayList<>();
+    } // end of filterSegments
 
-        // creates the set that remembers the order things are added
-        Set<String> hashes = new LinkedHashSet<>();
+    /*
+     * Segment Splitter (FR-07, AD-4)
+     * What it does: makes one HighwaySegment row per highway point (geohash left null)
+     * and gives each point its 10-mile channel.
+     *
+     * How to code it:
+     *   1. Group the features that share route, STFIPS, BEGMP and ENDMP (NHPN splits one
+     *      segment into many LineStrings). Keep the groups in file order.
+     *   2. For each group, put its points in west-to-east order (mileposts increase going
+     *      east): turn any piece whose first longitude is east of its last around, sort the
+     *      pieces by their first longitude, then join them into one list of {lon, lat}.
+     *   3. Walk the list adding GeoHash.haversineMiles between neighbors, so distance[i] is
+     *      the miles from the first point to point i (measured across ALL pieces).
+     *   4. channel = HiChan.computeChannelNumber(ENDMP). For each multiple of 10 (B)
+     *      strictly between BEGMP and ENDMP, find the point whose distance is closest to
+     *      (B - BEGMP): points up to and including it get channel B, later points move on
+     *      to the next mark. Example: BEGMP 9.0, ENDMP 15.0 splits at the point closest to
+     *      1 mile; points up to it are channel 10, the rest are channel 20.
+     *   5. rows.add(new HighwaySegment(null, route, stfips, begMp, endMp, lat, lon, channel))
+     *      for every point, in that west-to-east order. Note lat = point[1], lon = point[0].
+     */
+    public static List<HighwaySegment> splitAtChannelBoundaries(List<RoadFeature> features) {
+        // TODO: one row per point with its 10-mile channel
+        return new ArrayList<>();
+    } // end of splitAtChannelBoundaries
 
-        // fills in extra points first so no geohash cell the line crosses gets skipped
-        List<double[]> dense = densify(feature.coordinates, MAX_STEP_DEGREES);
+    // Geohash Indexer: sets each row's geohash from its own LAT and LON (latitude first)
+    public static void computeGeohashes(List<HighwaySegment> rows, int precision) {
 
-        // adding each coordinate pair
-        for(double[] coord : dense) {
-            double lon = coord[0];
-            double lat = coord[1];
+        // adding each point's geohash
+        for(HighwaySegment row : rows)
+            row.setGeohash(GeoHash.encode(row.getLat(), row.getLon(), precision));
 
-            // turn it into a geohash and add it while duplicates are ignored
-            hashes.add(GeoHash.encode(lat, lon, precision));
-        } // end of for
-
-        return hashes; // yipee
     } // end of computeGeohashes
 
-    // Inserts extra points along each line piece so consecutive points are never farther apart than maxStepDegrees
-    // this fixes when a line crosses a cell with no vertex in it
-    public static List<double[]> densify(List<double[]> coordinates, double maxStepDegrees) {
+    // Lookup File Writer: returns the rows sorted by geohash (FR-04)
+    public static List<HighwaySegment> buildSegments(List<HighwaySegment> rows) {
+        List<HighwaySegment> sorted = new ArrayList<>(rows);
 
-        // creating double array list
-        List<double[]> result = new ArrayList<>();
-
-        // for index in coordinates
-        for(int i = 0; i < coordinates.size() - 1; i++){
-
-            double[] a = coordinates.get(i); // create cord A
-            double[] b = coordinates.get(i + 1); // create cord B
-            double dist = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])); // get the max distance
-            int steps = Math.max(1, (int) Math.ceil(dist/maxStepDegrees)); // get the max steps
-
-            // for steps in steps create a new double for each step
-            for(int s = 0; s < steps; s++) {
-                double t = s / (double) steps;
-                result.add(new double[] {
-                        a[0] + t * (b[0] - a[0]),
-                        a[1] + t * (b[1] - a[1])
-                });
-            } // end of for
-        } // end of for
-
-        // If coordinates not empty add coordinates to result
-        if (!coordinates.isEmpty())
-            result.add(coordinates.get(coordinates.size() - 1));
-
-        // returning result
-        return result;
-    } // end of densify
-
-
-    // converts every feature into one HighwaySegment row per unique geohash
-    public static List<HighwaySegment> buildSegments(List<RoadFeature> features, int precision) {
-        List<HighwaySegment> rows = new ArrayList<>();
-        Set<String> seen = new HashSet<>(); //HashSet holds each value at most once, efficient for checking values inside.
-
-        for (RoadFeature f : features) { //Outer loop over the 1,275 road pieces.
-            for(String h : computeGeohashes(f, precision)) { //Inner Loop of Strings made by computeGeohashes using f road piece with given precision.
-                String key = h + "|" + f.route + "|" + f.stfips + "|" + f.begMp + "|" + f.endMp; //key is the row identifying string, exists so HashSet can compare.
-                if (seen.add(key)) { //add() inserts the value and returns true if not present, returns false if row already exists there.
-                    rows.add(new HighwaySegment(h, f.route, f.stfips, f.begMp, f.endMp));
-                    //Constructor takes the 5 values in order and object goes in output list.
-                } // end of if
-
-            } // end of for
-        } // end of for
-
-        rows.sort(Comparator.comparing(HighwaySegment::getGeohash).thenComparingDouble(HighwaySegment::getBegMp));
+        sorted.sort(Comparator.comparing(HighwaySegment::getGeohash).thenComparingDouble(HighwaySegment::getBegMp));
         //Comparator that sorts alphabetically by geohash string using method reference, then when two rows have same geohash, the smaller BegMP goes first.
 
-        return rows;
+        return sorted;
     } // end of buildSegments
 
     // outputs the CSV with a header and with the rows appended after
@@ -341,7 +348,7 @@ public class Preprocessor {
         try (PrintWriter pw = new PrintWriter(new FileWriter(path))) {
 
             // Header
-            pw.println("GEOHASH,ROUTE,STFIPS,BEGMP,ENDMP");
+            pw.println("GEOHASH,ROUTE,STFIPS,BEGMP,ENDMP,LAT,LON,CHANNEL");
 
             // appends to rows from toCsvLine
             for(HighwaySegment row : rows)
@@ -398,4 +405,4 @@ public class Preprocessor {
 
     } // end of getValue
 
-} // end of Preprocessor
+} // end of Hi_Chan.Preprocessor
