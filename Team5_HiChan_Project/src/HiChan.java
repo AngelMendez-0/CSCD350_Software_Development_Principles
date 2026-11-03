@@ -1,3 +1,5 @@
+package Hi_Chan;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -5,40 +7,45 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * HiChan.java ("Highway Channel")
+ * Hi_Chan.HiChan.java ("Highway Channel")
  *
- * Reads a GPS log, finds which I-90 segment each point is on using the
- * Preprocessor's CSV, works out direction of travel, and writes the GPS
+ * Reads a GPS log, finds the nearest I-90 point for each reading using the
+ * Hi_Chan.Preprocessor's CSV, works out direction of travel, and writes the GPS
  * log back out with a Channel ID appended as the last field.
  *
- * Channel ID format:  I90 + STATE + DIR + "_" + CHANNEL
- *     I90WAEB_10  -> eastbound I-90 in Washington, milepost 0-10
- *     I90IDWB_30  -> westbound I-90 in Idaho, milepost 20-30
+ * Channel ID format (FR-13):  # + I90 + STATE + DIR + "_" + CHANNEL
+ *     #I90WAEB_290  -> eastbound I-90 in Washington, milepost 280-290
+ *     #I90IDWB_10   -> westbound I-90 in Idaho, milepost 0-10
+ *     #I90WA??_290  -> direction not known yet (FR-10)
  *
  * Rules from the vision statement:
  *   - Mileposts INCREASE going east and DECREASE going west (within a state).
  *   - Crossing the WA/ID line resets mileposts (Idaho starts at 0).
  *     WA -> ID means eastbound; ID -> WA means westbound.
- *   - Direction needs at least 3 GPS points, so the first couple can't be
- *     labeled right away. Go back and fill them in once direction is known.
- *   - If the GPS point repeats (truck stopped), reuse the prior Channel ID.
- *   - If a point matches no segment, use the next match and go back to fill
- *     in the missed record(s).
- *   - Every point is on I-90, so every record should get an answer in the end.
+ *   - Direction needs 3 GPS points: entry i is compared with entry i-2 (AD-6).
+ *     Earlier entries get ?? and are back-filled once direction is known (FR-12).
+ *   - If the GPS point repeats (truck stopped), reuse the prior Channel ID (FR-11).
+ *   - A bad line stays in place ending with SKIPPED-Error:<reason> (FR-14).
  *
- * Usage: java HiChan segments.csv "20260922-160725 - I90EB.csv" I90EB_out.csv
+ * Usage: java Hi_Chan.HiChan segments.csv "20260922-160725 - I90EB.csv" I90EB_out.csv
  */
 public class HiChan {
 
     /*
      * How to code it:
-     *   1. Check args.length >= 3 (index file, GPS log, output file); print usage if not.
-     *   2. Map<String, List<HighwaySegment>> index = loadIndex(args[0]);
-     *   3. List<GpsRecord> records = readGpsLog(args[1]);
-     *   4. processRecords(records, index);
-     *   5. writeOutput(records, args[2]);
-     *   6. Print a short summary (how many records, how many got a Channel ID).
-     *   7. Catch IOException and print an error.
+     *   1. If args.length != 3, print
+     *        Usage: java Hi_Chan.HiChan <lookup.csv> <gps.csv> <out.csv>
+     *      to System.err and System.exit(1).
+     *   2. If args[2] is the same file as args[0] or args[1], refuse it (NFR-S1).
+     *   3. Map<String, List<Hi_Chan.HighwaySegment>> index = loadIndex(args[0]);
+     *   4. List<Hi_Chan.GpsRecord> records = readGpsLog(args[1]);
+     *   5. processRecords(records, index);
+     *   6. backfillChannelIds(records);
+     *   7. writeOutput(records, args[2]);
+     *   8. Print a short summary, e.g. "Labeled 128 of 128 entries".
+     *   9. Catch IOException: print ONE line to System.err,
+     *        ERROR:<file name>:<e.getMessage()>
+     *      with no stack trace, and System.exit(1) (NFR-U2).
      *   Run it once for the EB file and once for the WB file.
      */
     public static void main(String[] args) {
@@ -46,36 +53,40 @@ public class HiChan {
     } // end of main
 
     /*
-     * What it does: reads the Preprocessor CSV into a HashMap so lookups by
-     * geohash are fast:  geohash -> every segment that touches that cell.
+     * What it does: reads the Hi_Chan.Preprocessor CSV into a HashMap so lookups by
+     * geohash are fast:  geohash -> every highway point in that cell.
      *
      * How to code it:
-     *   1. Map<String, List<HighwaySegment>> index = new HashMap<>();
-     *   2. Read the file line by line (BufferedReader or Files.readAllLines).
-     *      Skip the header line.
-     *   3. HighwaySegment seg = HighwaySegment.fromCsvLine(line);
+     *   1. Throw new IOException(reason) when the file can't be used, with reason:
+     *        "file not found", "file not readable", "file empty" (no rows),
+     *        "wrong header line" (must be GEOHASH,ROUTE,STFIPS,BEGMP,ENDMP,LAT,LON,CHANNEL),
+     *        "lookup file not sorted" (a geohash smaller than the one before it).
+     *   2. Read the file line by line; trim each line so CRLF files work. Skip the header.
+     *   3. Hi_Chan.HighwaySegment seg = Hi_Chan.HighwaySegment.fromCsvLine(line);
      *   4. index.computeIfAbsent(seg.getGeohash(), k -> new ArrayList<>()).add(seg);
      *   5. return index;
-     *   A List is needed because several segments (e.g. both ends of two
-     *   neighboring segments) can share one geohash cell.
      */
     public static Map<String, List<HighwaySegment>> loadIndex(String path) throws IOException {
         Map<String, List<HighwaySegment>> index = new HashMap<>();
-        // TODO: read CSV and build geohash -> segments map
+        // TODO: read CSV and build geohash -> points map
         return index;
     } // end of loadIndex
 
     /*
-     * What it does: reads a GPS Logger CSV into a list of GpsRecord objects.
+     * What it does: reads a GPS Logger CSV into a list of Hi_Chan.GpsRecord objects.
      *
      * How to code it:
-     *   1. Read all lines. Skip the first (header) line:
+     *   1. Throw new IOException(reason) with "file not found", "file not readable",
+     *      "file empty" or "wrong header line". The header must be:
      *        date time,latitude,longitude,altitude(m),speed(m/s),sat_used
-     *   2. Skip blank lines.
-     *   3. records.add(GpsRecord.fromCsvLine(line));
-     *   4. return records;
-     *   Hint: keep the header string somewhere (e.g. a static field) so
-     *   writeOutput can reuse it with ",channel_id" added.
+     *   2. Remember the header and the line ending ("\r\n" if the file has one, else "\n")
+     *      in static fields so writeOutput can reuse them (NFR-D1).
+     *   3. Skip blank lines.
+     *   4. records.add(Hi_Chan.GpsRecord.fromCsvLine(line));
+     *      If it throws IllegalArgumentException, keep the line in its place instead:
+     *        GpsRecord bad = new GpsRecord(line, null, 0, 0, 0, 0, 0);
+     *        bad.setErrorText(e.getMessage());   // FR-14
+     *   5. return records;
      */
     public static List<GpsRecord> readGpsLog(String path) throws IOException {
         List<GpsRecord> records = new ArrayList<>();
@@ -84,116 +95,76 @@ public class HiChan {
     } // end of readGpsLog
 
     /*
-     * What it does: the main algorithm. Matches every record to a segment,
-     * then assigns Channel IDs.
+     * What it does: the main algorithm. Matches every record to a highway point,
+     * then builds its Channel ID. (main calls backfillChannelIds afterwards.)
      *
-     * How to code it (one workable plan in passes, which is easier to debug):
-     *
-     *   PASS 1: match segments
+     * How to code it:
      *     for i = 0 .. records.size()-1:
-     *        r = records.get(i)
-     *        r.setGeohash(GeoHash.encode(r.getLatitude(), r.getLongitude()))
-     *        previous = (i > 0) ? records.get(i-1).getSegment() : null
-     *        r.setSegment(findBestSegment(r, index, previous))   // may be null
-     *
-     *   PASS 2: fill gaps
-     *     fillMissingSegments(records)   // copy the next/previous good match into nulls
-     *
-     *   PASS 3: direction + channel
-     *     for i = 0 .. size-1:
-     *        r = records.get(i)
-     *        if i > 0 and r.isSameLocation(records.get(i-1)) and previous
-     *            channelId != null -> reuse it and continue
-     *        String dir = determineDirection(records, i)   // "EB", "WB" or null
-     *        if dir != null:
-     *            r.setChannelId(buildChannelId(r.getSegment(), dir))
-     *
-     *   PASS 4: back-fill early records
-     *     backfillChannelIds(records)   // first 1-2 records had no direction yet
+     *        r = records.get(i); skip it if r.getErrorText() != null
+     *        r.setGeohash(Hi_Chan.GeoHash.encode(r.getLatitude(), r.getLongitude()))
+     *        seg = findBestSegment(r, index, previous point)
+     *        if seg == null: r.setErrorText("no I-90 point near reading") and continue
+     *        r.setSegment(seg)
+     *        if r.isSameLocation(previous good record) and that record's Channel ID
+     *           has a known direction (not ??) -> reuse its segment and Channel ID (FR-11)
+     *        else r.setChannelId(buildChannelId(seg, determineDirection(records, i)))
      */
     public static void processRecords(List<GpsRecord> records, Map<String, List<HighwaySegment>> index) {
-        // TODO: implement the passes described above
+        // TODO: match and label every record
     } // end of processRecords
 
     /*
-     * What it does: picks the most likely segment for a GPS point.
+     * What it does: picks the highway point nearest the GPS reading (FR-06).
      *
      * How to code it:
-     *   1. List<HighwaySegment> candidates = index.get(record.getGeohash());
-     *   2. If candidates is null or empty:
-     *        - (optional) try GeoHash.neighbors(record.getGeohash()) and collect
-     *          candidates from those cells instead
-     *        - if still nothing, return null (fillMissingSegments handles it later)
-     *   3. If there's exactly one candidate, return it.
-     *   4. If there are several, choose with a tie-breaker:
-     *        a. If previous != null, prefer candidates in the same state
-     *           (same getStfips()).
-     *        b. Among those, choose the one whose getMidMp() is closest to
-     *           previous.getMidMp(). Trucks don't jump many miles in 10 seconds.
-     *        c. If previous == null, just return the first candidate.
-     *   5. Return the chosen segment.
+     *   1. List<Hi_Chan.HighwaySegment> candidates = index.get(record's geohash)
+     *      (encode it yourself if record.getGeohash() is null).
+     *   2. If candidates is null or empty, collect the points in the 8 cells from
+     *      Hi_Chan.GeoHash.neighbors(...) instead (fallback only, AD-2).
+     *      If there are still none, return null.
+     *   3. Return the candidate with the smallest
+     *      Hi_Chan.GeoHash.haversineMiles(reading lat, lon, point lat, lon).
+     *      On an exact tie, prefer the point in the same state as `previous`.
      */
     public static HighwaySegment findBestSegment(GpsRecord record,
                                                  Map<String, List<HighwaySegment>> index,
                                                  HighwaySegment previous) {
-        // TODO: look up candidates and choose the best one
+        // TODO: look up candidates and choose the nearest
         return null;
     } // end of findBestSegment
 
     /*
-     * What it does: any record whose segment is still null gets the segment of
-     * the NEXT record that does have one (spec: "read the next geolocation and
-     * try again then go back to the previous record(s) and update").
+     * What it does: returns "EB", "WB" or "??" for record i (FR-09, FR-10).
      *
      * How to code it:
-     *   1. Loop i from the END of the list backwards to 0, keeping
-     *      HighwaySegment nextGood = null.
-     *   2. If records.get(i).getSegment() != null -> nextGood = that segment.
-     *      Else if nextGood != null -> records.get(i).setSegment(nextGood).
-     *   3. After that, if records at the very end are still null (no "next"),
-     *      do a forward pass copying the previous good segment.
-     *   Looping backwards fills every gap in a single pass.
-     */
-    public static void fillMissingSegments(List<GpsRecord> records) {
-        // TODO: back-fill null segments
-    } // end of fillMissingSegments
-
-    /*
-     * What it does: returns "EB", "WB", or null (not enough info yet) for
-     * record i by comparing it with the two records before it (3 points total).
-     *
-     * How to code it:
-     *   1. If i < 2 return null (fewer than 3 points so far).
-     *   2. Get segments a = records[i-2], b = records[i-1], c = records[i].
+     *   1. Find the two good records before i (skip any with errorText or no segment).
+     *      If there aren't two, return "??".
+     *   2. a = segment of the record two back, c = segment of record i.
      *   3. STATE CHANGE CHECK first (mileposts reset at the border):
-     *        - WA ("53") earlier and ID ("16") later -> "EB"
-     *        - ID earlier and WA later               -> "WB"
-     *   4. Otherwise compare mileposts (use getMidMp()):
-     *        - if a <= b <= c and a < c -> "EB" (increasing)
-     *        - if a >= b >= c and a > c -> "WB" (decreasing)
-     *   5. If all three are the SAME segment (milepost didn't change), it's
-     *      unclear. Return the previous record's direction if known
-     *      (parse it out of records[i-1].getChannelId()), otherwise null.
-     *   Tip: comparing a and c only (ignoring b) is more forgiving if b is noisy.
+     *        - a is WA ("53") and c is ID ("16") -> "EB"
+     *        - a is ID and c is WA               -> "WB"
+     *   4. Otherwise compare mileposts:
+     *        - c.getBegMp() > a.getBegMp() (or equal BEGMP and bigger ENDMP) -> "EB"
+     *        - c.getBegMp() < a.getBegMp() (or equal BEGMP and smaller ENDMP) -> "WB"
+     *   5. Same segment: return the direction in the previous good record's Channel ID
+     *      (the two letters before "_"), or "??" if it has none.
      */
     public static String determineDirection(List<GpsRecord> records, int i) {
-        // TODO: decide EB / WB / null
+        // TODO: decide EB / WB / ??
         return null;
     } // end of determineDirection
 
     /*
-     * What it does: converts a milepost into its 10-mile channel number.
+     * What it does: converts a milepost into its 10-mile channel number (FR-08).
      *   0 to 10  -> 10
-     *   10 to 20 -> 20
-     *   20 to 30 -> 30   ... and so on
+     *   10.1 to 20 -> 20
+     *   20.1 to 30 -> 30   ... and so on
      *
      * How to code it:
-     *   1. int channel = (int) Math.ceil(milepost / 10.0) * 10;
+     *   1. int channel = (int) Math.ceil(milepost / HiChanConfig.CHANNEL_MILES) * HiChanConfig.CHANNEL_MILES;
      *   2. if channel == 0 (milepost exactly 0) return 10.
      *   3. return channel;
-     *   Note: the spec says ranges are "inclusive", so milepost exactly 10.0
-     *   could be 10 or 20. Using ceil puts it in 10. Pick one rule and note it
-     *   in a comment.
+     *   Milepost exactly 10.0 gives 10 (inclusive upper bound).
      */
     public static int computeChannelNumber(double milepost) {
         // TODO: round milepost up to the next multiple of 10
@@ -201,48 +172,41 @@ public class HiChan {
     } // end of computeChannelNumber
 
     /*
-     * What it does: assembles the final string, e.g. "I90WAEB_290".
+     * What it does: assembles the Channel ID, e.g. "#I90WAEB_290" (FR-13).
      *
      * How to code it:
-     *   1. If segment == null or direction == null, return null.
-     *   2. route = segment.getRoute()            -> "I90"
-     *      state = segment.getStateAbbrev()      -> "WA" / "ID"
-     *      num   = computeChannelNumber(segment.getMidMp())
-     *   3. return route + state + direction + "_" + num;
-     *   (The spec examples show a leading "#". Ask your instructor whether the
-     *   output should include it; it's easy to add here.)
+     *   1. If point == null, return null. If direction == null, use "??".
+     *   2. return HiChanConfig.CHANNEL_PREFIX + point.getRoute() + point.getStateAbbrev()
+     *             + direction + "_" + point.getChannel();
      */
-    public static String buildChannelId(HighwaySegment segment, String direction) {
+    public static String buildChannelId(HighwaySegment point, String direction) {
         // TODO: build the Channel ID string
         return null;
     } // end of buildChannelId
 
     /*
-     * What it does: gives a Channel ID to records that couldn't get one when
-     * they were processed (the first two records, plus any spot where
-     * direction was unclear).
+     * What it does: replaces "??" once direction is known (FR-12).
      *
      * How to code it:
-     *   1. Find the first record that HAS a channelId and get its direction
-     *      (the two letters before "_", e.g. "EB").
-     *   2. Walk backwards from there to index 0. For each record with a null
-     *      channelId, set buildChannelId(itsOwnSegment, thatDirection).
-     *      (Use the record's own segment so the state/channel number stays correct.)
-     *   3. Do a forward pass for any remaining nulls, using the most recent
-     *      known direction.
+     *   1. Find the first record whose Channel ID has a known direction
+     *      (the two letters before "_" are "EB" or "WB"). If none, leave everything
+     *      as is: a log with only two entries keeps ?? (FR-10).
+     *   2. Every earlier "??" record gets buildChannelId(itsOwnSegment, thatDirection).
+     *   3. Any later "??" record takes the most recent known direction.
+     *   Skip records with errorText.
      */
     public static void backfillChannelIds(List<GpsRecord> records) {
-        // TODO: fill in channel IDs that were left null
+        // TODO: fill in ?? once direction is known
     } // end of backfillChannelIds
 
     /*
-     * What it does: writes the updated GPS file. Same rows as the input,
-     * with the Channel ID as the last field.
+     * What it does: writes the updated GPS file. Same lines as the input, in the
+     * same order, with the Channel ID as the last field (FR-12).
      *
      * How to code it:
      *   1. Open a PrintWriter with try-with-resources.
-     *   2. Write the original header + ",channel_id".
-     *   3. For each record: writer.println(record.toOutputLine());
+     *   2. Write the saved header + ",channel_id", using the saved line ending.
+     *   3. For each record: write record.toOutputLine() + the saved line ending.
      */
     public static void writeOutput(List<GpsRecord> records, String path) throws IOException {
         // TODO: write header + every record
