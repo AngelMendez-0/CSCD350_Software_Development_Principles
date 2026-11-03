@@ -1,10 +1,12 @@
+package Hi_Chan;
+
 /*
  * Converts a latitude/longitude pair into a geohash string.
- * Both the Preprocessor (for each road coordinate) and HiChan (for each GPS
+ * Both the Hi_Chan.Preprocessor (for each road coordinate) and Hi_Chan.HiChan (for each GPS
  * point) use this class, so the two programs MUST produce identical hashes
  * for the same location.
  *
- * Project spec: precision 6 (a cell is about 0.6 km x 1.2 km at this latitude).
+ * Project spec: precision 5 (HiChanConfig.GEOHASH_PRECISION, AD-2).
  * You write this yourself; there is no built-in Java geohash function.
  */
 public class GeoHash {
@@ -14,7 +16,7 @@ public class GeoHash {
     public static final String BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
 
     // Default precision (number of characters) used everywhere in this project.
-    public static final int DEFAULT_PRECISION = 6;
+    public static final int DEFAULT_PRECISION = HiChanConfig.GEOHASH_PRECISION;
 
     /*
      * What it does: returns a geohash string that is `precision` characters long.
@@ -34,7 +36,8 @@ public class GeoHash {
      *        e. Once bit == 5, append BASE32.charAt(ch), then reset bit and ch to 0.
      *   4. Return result.toString().
      *
-     * Test it: encode(47.6588, -117.4260, 6) should return "c2krpu" (Spokane).
+     * Test it: encode(47.6588, -117.4260, 6) should return "c2krpu" (Spokane)
+     * and encode(47.709889, -116.993985, 5) should return "c2kz3".
      * You can check other values on an online geohash site.
      */
     public static String encode(double lat, double lon, int precision) {
@@ -55,22 +58,32 @@ public class GeoHash {
 
     /*
      * What it does: returns the 8 geohashes surrounding the given cell.
-     * Useful when a GPS point lands in a cell that no road vertex fell into
-     * (see the "One Potential Issue" section of PreprocessorLogic.docx).
+     * Used only as a fallback when a reading's own cell has no highway point (AD-2).
      *
-     * How to code it (one simple approach):
-     *   1. Decode the geohash back to its cell center and cell width/height.
-     *      (Or keep the lat/lon you started with and the cell size for this
-     *      precision.)
+     * How to code it:
+     *   1. Decode the geohash back to its cell: reverse the bit steps of encode to get
+     *      minLat, maxLat, minLon, maxLon. cellHeight = maxLat - minLat, cellWidth = maxLon - minLon.
      *   2. For each dLat in {-1, 0, 1} and dLon in {-1, 0, 1}, skipping (0,0),
-     *      call encode(centerLat + dLat * cellHeight, centerLon + dLon * cellWidth).
-     *   3. Return the 8 hashes as a List<String>.
-     *
-     * If you don't need it, leave it alone. The spec's "read the next GPS
-     * point and back-fill" approach also handles misses.
+     *      call encode(centerLat + dLat * cellHeight, centerLon + dLon * cellWidth, geohash.length()).
+     *      Skip latitudes past 90 or -90; wrap longitudes past 180 or -180.
+     *   3. Return the hashes as a List<String> (8 of them, fewer at a pole).
      */
     public static java.util.List<String> neighbors(String geohash) {
-        // TODO (optional): compute the 8 surrounding geohash cells
+        // TODO: compute the surrounding geohash cells
         return new java.util.ArrayList<>();
     } // end of neighbors
-} //end of GeoHash
+
+    /*
+     * What it does: Haversine distance in miles between two latitude/longitude points.
+     * Used to find the nearest highway point and the point closest to a 10-mile mark.
+     *
+     * How to code it:
+     *   1. dLat = toRadians(lat2 - lat1), dLon = toRadians(lon2 - lon1)
+     *   2. a = sin(dLat/2)^2 + cos(toRadians(lat1)) * cos(toRadians(lat2)) * sin(dLon/2)^2
+     *   3. return 2 * 3958.8 * asin(sqrt(a))     (3958.8 = Earth radius in miles)
+     */
+    public static double haversineMiles(double lat1, double lon1, double lat2, double lon2) {
+        // TODO: implement the Haversine formula
+        return 0;
+    } // end of haversineMiles
+} //end of Hi_Chan.GeoHash
